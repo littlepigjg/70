@@ -85,12 +85,8 @@ class UploadHandler {
     return DownloadManager.startDownload(code, ip, userAgent);
   }
 
-  static async completeDownload(code) {
-    return DownloadManager.completeDownload(code);
-  }
-
-  static async failDownload(code) {
-    return DownloadManager.failDownload(code);
+  static async finalizeDownload(code, success, willReachLimit) {
+    return DownloadManager.finalizeDownload(code, success, willReachLimit);
   }
 
   static getShareInfo(code) {

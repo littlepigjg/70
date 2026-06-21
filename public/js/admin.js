@@ -32,24 +32,27 @@ function formatFullDate(timestamp) {
 function getStatusBadge(share) {
   let status = share.statusText;
   let className = 'status-active';
-  
-  if (share.status === 'pending_delete') {
+
+  if (share.status === 'downloading') {
     status = '下载中';
     className = 'status-active';
   } else if (share.status === 'ready_for_cleanup' || share.status === 'download_limit_reached') {
+    status = '已用完';
+    className = 'status-limit';
+  } else if (share.downloadCount >= share.maxDownloads && share.maxDownloads !== -1) {
     status = '已用完';
     className = 'status-limit';
   } else if (share.isExpired) {
     status = '已过期';
     className = 'status-expired';
   } else if (share.isLimitReached) {
-    status = '次数已满';
+    status = '已用完';
     className = 'status-limit';
   } else if (share.status !== 'active') {
     status = '已删除';
     className = 'status-deleted';
   }
-  
+
   return `<span class="status-badge ${className}">${status}</span>`;
 }
 
@@ -125,7 +128,7 @@ async function loadShares() {
           <td>
             ${share.status === 'active' ? `
               <button class="btn btn-danger" onclick="deleteShare('${share.code}')">删除</button>
-            ` : share.status === 'pending_delete' ? '下载中' : '-'}
+            ` : share.status === 'downloading' ? '下载中' : '-'}
           </td>
         </tr>
       `).join('');

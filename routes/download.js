@@ -21,21 +21,18 @@ router.post('/:code', async (req, res) => {
   const code = req.params.code;
   let downloadSession = null;
   let downloadFinalized = false;
+  let willReachLimit = false;
 
-  const finalizeDownload = async (success) => {
+  const finalizeAndRelease = async (success) => {
     if (downloadFinalized || !downloadSession) return;
     downloadFinalized = true;
 
     try {
-      if (success) {
-        await UploadHandler.completeDownload(code);
-        console.log(`[${new Date().toLocaleString()}] 下载完成: ${code}`);
-      } else {
-        await UploadHandler.failDownload(code);
-        console.log(`[${new Date().toLocaleString()}] 下载失败/中断: ${code}`);
-      }
+      console.log(`[${new Date().toLocaleString()}] 下载结束处理 [${success ? '成功' : '失败'}]: ${code}, 开始finalize...`);
+      await UploadHandler.finalizeDownload(code, success, willReachLimit);
+      console.log(`[${new Date().toLocaleString()}] finalize完成: ${code}`);
     } catch (err) {
-      console.error(`[${new Date().toLocaleString()}] 下载结束处理失败: ${code} - ${err.message}`);
+      console.error(`[${new Date().toLocaleString()}] finalize失败: ${code} - ${err.message}`);
     } finally {
       if (downloadSession && downloadSession.releaseLock) {
         downloadSession.releaseLock();
@@ -45,21 +42,25 @@ router.post('/:code', async (req, res) => {
   };
 
   try {
-    const ip = req.ip || req.connection.remoteAddress || 
+    const ip = req.ip || req.connection.remoteAddress ||
                req.headers['x-forwarded-for'] || req.headers['x-real-ip'];
     const userAgent = req.headers['user-agent'] || '';
 
-    console.log(`[${new Date().toLocaleString()}] 开始下载请求: ${code}, IP: ${ip}`);
+    console.log(`[${new Date().toLocaleString()}] ========== 下载请求开始: ${code}, IP: ${ip} ==========`);
     downloadSession = await UploadHandler.startDownload(code, ip, userAgent);
-    console.log(`[${new Date().toLocaleString()}] 下载会话已创建，锁已持有: ${code}`);
+    willReachLimit = downloadSession.willReachLimit || false;
+    console.log(`[${new Date().toLocaleString()}] 下载会话创建成功: ${code}, 当前次数: ${downloadSession.share.downloadCount}/${downloadSession.share.maxDownloads === -1 ? '∞' : downloadSession.share.maxDownloads}, willReachLimit=${willReachLimit}`);
 
     res.on('finish', async () => {
       const success = res.statusCode >= 200 && res.statusCode < 300;
-      await finalizeDownload(success);
+      console.log(`[${new Date().toLocaleString()}] Response finish: ${code}, status=${res.statusCode}, success=${success}`);
+      await finalizeAndRelease(success);
     });
 
     res.on('close', async () => {
-      await finalizeDownload(res.headersSent && res.statusCode >= 200 && res.statusCode < 300);
+      const wasSuccessful = res.headersSent && res.statusCode >= 200 && res.statusCode < 300;
+      console.log(`[${new Date().toLocaleString()}] Connection close: ${code}, headersSent=${res.headersSent}, status=${res.statusCode}, treatingAsSuccess=${wasSuccessful}`);
+      await finalizeAndRelease(wasSuccessful);
     });
 
     res.download(downloadSession.filePath, downloadSession.originalName, {
@@ -70,13 +71,13 @@ router.post('/:code', async (req, res) => {
     }, async (err) => {
       if (err) {
         console.error(`[${new Date().toLocaleString()}] res.download 错误: ${code} - ${err.message}`);
-        await finalizeDownload(false);
+        await finalizeAndRelease(false);
       }
     });
 
   } catch (err) {
     console.error(`[${new Date().toLocaleString()}] 下载请求失败: ${code} - ${err.message}`);
-    await finalizeDownload(false);
+    await finalizeAndRelease(false);
     res.status(400).json({
       success: false,
       message: err.message

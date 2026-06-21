@@ -38,14 +38,16 @@ class DownloadManager {
         DataStore.logDownload(share, ip, userAgent, tx);
 
         const newDownloadCount = share.downloadCount + 1;
-        const updates = { downloadCount: newDownloadCount };
+        const updates = {
+          downloadCount: newDownloadCount,
+          status: 'downloading'
+        };
 
         if (share.maxDownloads !== -1 && newDownloadCount >= share.maxDownloads) {
-          updates.status = 'pending_delete';
+          updates.reachedLimitAt = Date.now();
         }
 
         DataStore.updateShare(code, updates, tx);
-
         DataStore.startDownload(code);
 
         return {
@@ -53,7 +55,8 @@ class DownloadManager {
           originalName: share.originalName,
           mimetype: share.mimetype,
           size: share.size,
-          share: { ...share, ...updates }
+          share: { ...share, ...updates },
+          willReachLimit: share.maxDownloads !== -1 && newDownloadCount >= share.maxDownloads
         };
       });
 
@@ -73,44 +76,47 @@ class DownloadManager {
     }
   }
 
-  static async completeDownload(code) {
+  static async finalizeDownload(code, success, willReachLimit) {
     const lockKey = `download:${code}`;
-    
-    return lockManager.withLock(lockKey, async () => {
-      const share = DataStore.getShareByCode(code);
-      if (!share) return null;
 
-      if (share.status === 'pending_delete') {
-        DataStore.updateShare(code, {
-          status: 'ready_for_cleanup',
-          completedAt: Date.now()
-        });
-        DataStore.flush();
-        console.log(`[${new Date().toLocaleString()}] 分享 ${code} 下载完成，标记为可清理`);
-      }
-
-      return DataStore.getShareByCode(code);
-    });
-  }
-
-  static async failDownload(code) {
-    const lockKey = `download:${code}`;
-    
     return lockManager.withLock(lockKey, async () => {
       return transactionManager.run(async (tx) => {
         const share = DataStore.getShareByCode(code);
         if (!share) return null;
 
-        if (share.status === 'pending_delete') {
-          const newDownloadCount = Math.max(0, share.downloadCount - 1);
-          DataStore.updateShare(code, {
-            downloadCount: newDownloadCount,
-            status: 'active'
-          }, tx);
-          console.log(`[${new Date().toLocaleString()}] 分享 ${code} 下载失败，回滚下载次数到 ${newDownloadCount}`);
+        if (!success) {
+          if (share.status === 'downloading') {
+            const newDownloadCount = Math.max(0, share.downloadCount - 1);
+            DataStore.updateShare(code, {
+              downloadCount: newDownloadCount,
+              status: 'active',
+              reachedLimitAt: null
+            }, tx);
+            console.log(`[${new Date().toLocaleString()}] 分享 ${code} 下载失败，回滚次数到 ${newDownloadCount}`);
+          }
+          return DataStore.getShareByCode(code);
         }
 
-        return DataStore.getShareByCode(code);
+        if (success && share.status === 'downloading') {
+          const now = Date.now();
+          const updates = {
+            completedAt: now
+          };
+
+          if (willReachLimit || ExpiryChecker.isDownloadLimitReached(share)) {
+            updates.status = 'ready_for_cleanup';
+            updates.readyAt = now;
+            console.log(`[${new Date().toLocaleString()}] 分享 ${code} 下载完成，次数已满，标记为可清理`);
+          } else {
+            updates.status = 'active';
+            console.log(`[${new Date().toLocaleString()}] 分享 ${code} 下载完成，还有剩余次数`);
+          }
+
+          DataStore.updateShare(code, updates, tx);
+          return DataStore.getShareByCode(code);
+        }
+
+        return share;
       });
     });
   }
@@ -118,6 +124,10 @@ class DownloadManager {
   static async canDownload(code) {
     const share = DataStore.getShareByCode(code);
     if (!share) return { canDownload: false, reason: 'not_found' };
+
+    if (ExpiryChecker.isDownloadLimitReached(share)) {
+      return { canDownload: false, reason: 'download_limit' };
+    }
 
     if (DataStore.isDownloading(code)) {
       return { canDownload: false, reason: 'downloading' };

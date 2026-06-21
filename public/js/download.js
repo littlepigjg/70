@@ -58,8 +58,10 @@ function showAlert(element, message) {
 function getStatusBadge(status) {
   const statusMap = {
     '正常': 'status-active',
+    '下载中': 'status-active',
     '已过期': 'status-expired',
     '下载次数已满': 'status-limit',
+    '已用完': 'status-limit',
     '已失效': 'status-deleted'
   };
   return statusMap[status] || 'status-deleted';
@@ -132,7 +134,7 @@ function displayShareInfo(info) {
   downloadBtn.disabled = !info.canDownload;
   if (!info.canDownload) {
     downloadBtn.textContent = info.status === '已过期' ? '文件已过期' : 
-                              info.status === '下载次数已满' ? '下载次数已满' : '无法下载';
+                              info.status === '下载次数已满' || info.status === '已用完' ? '下载次数已满' : '无法下载';
   } else {
     downloadBtn.textContent = '立即下载';
   }

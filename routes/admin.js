@@ -73,13 +73,11 @@ router.post('/cleanup', async (req, res) => {
   }
 });
 
-router.delete('/share/:code', (req, res) => {
+router.delete('/share/:code', async (req, res) => {
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const config = require('../config');
+    const code = req.params.code;
+    const share = DataStore.getShareByCode(code);
     
-    const share = DataStore.getShareByCode(req.params.code);
     if (!share) {
       return res.status(404).json({
         success: false,
@@ -87,12 +85,14 @@ router.delete('/share/:code', (req, res) => {
       });
     }
 
-    const filePath = path.join(config.UPLOAD_DIR, share.filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    if (ExpiryChecker.isDownloading(share)) {
+      return res.status(400).json({
+        success: false,
+        message: '该文件正在下载中，请稍后再试'
+      });
     }
 
-    DataStore.updateShare(req.params.code, { status: 'deleted_by_admin' });
+    await CleanupTask.forceDeleteShare(code);
 
     res.json({
       success: true,

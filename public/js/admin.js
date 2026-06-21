@@ -33,7 +33,13 @@ function getStatusBadge(share) {
   let status = share.statusText;
   let className = 'status-active';
   
-  if (share.isExpired) {
+  if (share.status === 'pending_delete') {
+    status = '下载中';
+    className = 'status-active';
+  } else if (share.status === 'ready_for_cleanup' || share.status === 'download_limit_reached') {
+    status = '已用完';
+    className = 'status-limit';
+  } else if (share.isExpired) {
     status = '已过期';
     className = 'status-expired';
   } else if (share.isLimitReached) {
@@ -69,8 +75,16 @@ async function loadStats() {
           <div class="stat-label">有效分享</div>
         </div>
         <div class="stat-card">
+          <div class="stat-value">${stats.downloading || 0}</div>
+          <div class="stat-label">下载中</div>
+        </div>
+        <div class="stat-card">
           <div class="stat-value">${stats.expired}</div>
           <div class="stat-label">已过期</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${stats.readyForCleanup || 0}</div>
+          <div class="stat-label">待清理</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">${formatFileSize(stats.totalActiveSize)}</div>
@@ -111,7 +125,7 @@ async function loadShares() {
           <td>
             ${share.status === 'active' ? `
               <button class="btn btn-danger" onclick="deleteShare('${share.code}')">删除</button>
-            ` : '-'}
+            ` : share.status === 'pending_delete' ? '下载中' : '-'}
           </td>
         </tr>
       `).join('');

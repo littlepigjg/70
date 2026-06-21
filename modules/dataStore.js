@@ -33,6 +33,25 @@ class DataStore {
     return null;
   }
 
+  static atomicUpdateShare(code, updateFn) {
+    const shares = this.readShares();
+    const index = shares.findIndex(s => s.code === code);
+    if (index === -1) {
+      return null;
+    }
+
+    const currentShare = shares[index];
+    const updates = updateFn(currentShare);
+    
+    if (updates === null || updates === undefined) {
+      return null;
+    }
+
+    shares[index] = { ...currentShare, ...updates };
+    this.writeShares(shares);
+    return shares[index];
+  }
+
   static getShareByCode(code) {
     const shares = this.readShares();
     return shares.find(s => s.code === code);
@@ -74,6 +93,17 @@ class DataStore {
     } catch (err) {
       return [];
     }
+  }
+
+  static getSharesByStatus(status) {
+    const shares = this.readShares();
+    return shares.filter(s => s.status === status);
+  }
+
+  static getExpiredShares() {
+    const now = Date.now();
+    const shares = this.readShares();
+    return shares.filter(s => s.expiryTime && s.expiryTime < now);
   }
 }
 

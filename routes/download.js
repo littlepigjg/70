@@ -19,62 +19,64 @@ router.get('/info/:code', (req, res) => {
 
 router.post('/:code', async (req, res) => {
   const code = req.params.code;
-  let downloadStarted = false;
-  let downloadCompleted = false;
+  let downloadSession = null;
+  let downloadFinalized = false;
+
+  const finalizeDownload = async (success) => {
+    if (downloadFinalized || !downloadSession) return;
+    downloadFinalized = true;
+
+    try {
+      if (success) {
+        await UploadHandler.completeDownload(code);
+        console.log(`[${new Date().toLocaleString()}] 下载完成: ${code}`);
+      } else {
+        await UploadHandler.failDownload(code);
+        console.log(`[${new Date().toLocaleString()}] 下载失败/中断: ${code}`);
+      }
+    } catch (err) {
+      console.error(`[${new Date().toLocaleString()}] 下载结束处理失败: ${code} - ${err.message}`);
+    } finally {
+      if (downloadSession && downloadSession.releaseLock) {
+        downloadSession.releaseLock();
+        console.log(`[${new Date().toLocaleString()}] 锁已释放: ${code}`);
+      }
+    }
+  };
 
   try {
     const ip = req.ip || req.connection.remoteAddress || 
                req.headers['x-forwarded-for'] || req.headers['x-real-ip'];
     const userAgent = req.headers['user-agent'] || '';
 
-    const fileInfo = await UploadHandler.attemptDownload(code, ip, userAgent);
-    downloadStarted = true;
+    console.log(`[${new Date().toLocaleString()}] 开始下载请求: ${code}, IP: ${ip}`);
+    downloadSession = await UploadHandler.startDownload(code, ip, userAgent);
+    console.log(`[${new Date().toLocaleString()}] 下载会话已创建，锁已持有: ${code}`);
 
     res.on('finish', async () => {
-      if (!downloadCompleted) {
-        downloadCompleted = true;
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          await UploadHandler.markDownloadComplete(code);
-          console.log(`[${new Date().toLocaleString()}] 下载完成: ${fileInfo.originalName} (${code})`);
-        } else {
-          await UploadHandler.markDownloadFailed(code);
-          console.log(`[${new Date().toLocaleString()}] 下载失败 (${res.statusCode}): ${fileInfo.originalName} (${code})`);
-        }
-      }
+      const success = res.statusCode >= 200 && res.statusCode < 300;
+      await finalizeDownload(success);
     });
 
     res.on('close', async () => {
-      if (!downloadCompleted) {
-        downloadCompleted = true;
-        if (!res.headersSent || res.statusCode < 200 || res.statusCode >= 400) {
-          await UploadHandler.markDownloadFailed(code);
-          console.log(`[${new Date().toLocaleString()}] 下载中断: ${fileInfo.originalName} (${code})`);
-        } else {
-          await UploadHandler.markDownloadComplete(code);
-          console.log(`[${new Date().toLocaleString()}] 下载完成 (连接关闭): ${fileInfo.originalName} (${code})`);
-        }
-      }
+      await finalizeDownload(res.headersSent && res.statusCode >= 200 && res.statusCode < 300);
     });
 
-    res.download(fileInfo.filePath, fileInfo.originalName, {
+    res.download(downloadSession.filePath, downloadSession.originalName, {
       headers: {
-        'Content-Type': fileInfo.mimetype,
-        'Content-Length': fileInfo.size
+        'Content-Type': downloadSession.mimetype,
+        'Content-Length': downloadSession.size
       }
     }, async (err) => {
       if (err) {
-        console.error('下载出错:', err);
-        if (!downloadCompleted) {
-          downloadCompleted = true;
-          await UploadHandler.markDownloadFailed(code);
-        }
+        console.error(`[${new Date().toLocaleString()}] res.download 错误: ${code} - ${err.message}`);
+        await finalizeDownload(false);
       }
     });
+
   } catch (err) {
-    if (downloadStarted && !downloadCompleted) {
-      downloadCompleted = true;
-      await UploadHandler.markDownloadFailed(code);
-    }
+    console.error(`[${new Date().toLocaleString()}] 下载请求失败: ${code} - ${err.message}`);
+    await finalizeDownload(false);
     res.status(400).json({
       success: false,
       message: err.message

@@ -68,6 +68,7 @@ class UploadHandler {
     };
 
     DataStore.addShare(share);
+    DataStore.flush();
 
     return {
       code: code,
@@ -80,16 +81,16 @@ class UploadHandler {
     };
   }
 
-  static async attemptDownload(code, ip, userAgent) {
-    return DownloadManager.attemptDownload(code, ip, userAgent);
+  static async startDownload(code, ip, userAgent) {
+    return DownloadManager.startDownload(code, ip, userAgent);
   }
 
-  static async markDownloadComplete(code) {
-    return DownloadManager.markDownloadComplete(code);
+  static async completeDownload(code) {
+    return DownloadManager.completeDownload(code);
   }
 
-  static async markDownloadFailed(code) {
-    return DownloadManager.markDownloadFailed(code);
+  static async failDownload(code) {
+    return DownloadManager.failDownload(code);
   }
 
   static getShareInfo(code) {
@@ -100,6 +101,7 @@ class UploadHandler {
 
     const share = verification.share;
     const check = ExpiryChecker.isShareValid(share);
+    const isCurrentlyDownloading = DataStore.isDownloading(code);
 
     return {
       code: share.code,
@@ -110,7 +112,7 @@ class UploadHandler {
       maxDownloads: share.maxDownloads,
       downloadCount: share.downloadCount,
       status: ExpiryChecker.getShareStatus(share),
-      canDownload: check.valid
+      canDownload: check.valid && !isCurrentlyDownloading
     };
   }
 }

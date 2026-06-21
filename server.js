@@ -3,10 +3,13 @@ const cors = require('cors');
 const path = require('path');
 const config = require('./config');
 const CleanupTask = require('./modules/cleanupTask');
+const DataStore = require('./modules/dataStore');
 
 const uploadRoutes = require('./routes/upload');
 const downloadRoutes = require('./routes/download');
 const adminRoutes = require('./routes/admin');
+
+DataStore.init();
 
 const app = express();
 
@@ -47,7 +50,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(config.PORT, () => {
+const server = app.listen(config.PORT, () => {
   console.log(`\n========================================`);
   console.log(`  文件快递柜服务已启动`);
   console.log(`  访问地址: http://localhost:${config.PORT}`);
@@ -57,4 +60,24 @@ app.listen(config.PORT, () => {
   console.log(`========================================\n`);
 
   CleanupTask.start();
+});
+
+process.on('SIGINT', () => {
+  console.log('\n正在关闭服务...');
+  DataStore.flush();
+  DataStore.shutdown();
+  server.close(() => {
+    console.log('服务已关闭');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    process.exit(0);
+  }, 2000);
+});
+
+process.on('SIGTERM', () => {
+  DataStore.flush();
+  DataStore.shutdown();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 2000);
 });

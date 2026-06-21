@@ -7,11 +7,11 @@ const lockManager = require('./lockManager');
 
 class CleanupTask {
   static canSafelyDelete(share) {
-    if (share.status === 'deleted' || share.status === 'file_missing') {
+    if (share.status === 'deleted' || share.status === 'file_missing' || share.status === 'deleted_by_admin') {
       return { canDelete: false, reason: 'already_deleted' };
     }
 
-    if (ExpiryChecker.isDownloading(share)) {
+    if (DataStore.isDownloading(share.code)) {
       return { canDelete: false, reason: 'downloading' };
     }
 
@@ -27,24 +27,27 @@ class CleanupTask {
   }
 
   static async deleteShareFile(share) {
-    const filePath = path.join(config.UPLOAD_DIR, share.filename);
-    let fileDeleted = false;
+    return lockManager.withLock(`download:${share.code}`, async () => {
+      const filePath = path.join(config.UPLOAD_DIR, share.filename);
+      let fileDeleted = false;
 
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      fileDeleted = true;
-      console.log(`  ✓ 已删除文件: ${share.originalName} (${share.code})`);
-    } else {
-      console.log(`  ℹ 文件已不存在: ${share.originalName} (${share.code})`);
-    }
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        fileDeleted = true;
+        console.log(`  ✓ 已删除文件: ${share.originalName} (${share.code})`);
+      } else {
+        console.log(`  ℹ 文件已不存在: ${share.originalName} (${share.code})`);
+      }
 
-    DataStore.updateShare(share.code, { 
-      status: 'deleted',
-      deletedAt: Date.now(),
-      fileDeleted: fileDeleted
+      DataStore.updateShare(share.code, {
+        status: 'deleted',
+        deletedAt: Date.now(),
+        fileDeleted: fileDeleted
+      });
+      DataStore.flush();
+
+      return fileDeleted;
     });
-
-    return fileDeleted;
   }
 
   static async cleanupExpiredShares() {
@@ -106,59 +109,16 @@ class CleanupTask {
         throw new Error('分享不存在');
       }
 
+      if (DataStore.isDownloading(code)) {
+        throw new Error('该文件正在下载中，请稍后再试');
+      }
+
       return this.deleteShareFile(share);
     });
   }
 
   static getStats() {
-    const shares = DataStore.getAllShares();
-    
-    let active = 0;
-    let downloading = 0;
-    let expired = 0;
-    let downloadLimit = 0;
-    let readyForCleanup = 0;
-    let deleted = 0;
-    let totalActiveSize = 0;
-
-    for (const share of shares) {
-      if (share.status === 'deleted' || share.status === 'file_missing' || share.status === 'deleted_by_admin') {
-        deleted++;
-        continue;
-      }
-
-      if (share.status === 'pending_delete') {
-        downloading++;
-        continue;
-      }
-
-      if (share.status === 'ready_for_cleanup' || share.status === 'download_limit_reached') {
-        readyForCleanup++;
-        continue;
-      }
-
-      if (share.status === 'active') {
-        if (ExpiryChecker.isExpired(share)) {
-          expired++;
-        } else if (ExpiryChecker.isDownloadLimitReached(share)) {
-          downloadLimit++;
-        } else {
-          active++;
-          totalActiveSize += share.size;
-        }
-      }
-    }
-
-    return {
-      total: shares.length,
-      active,
-      downloading,
-      expired,
-      downloadLimit,
-      readyForCleanup,
-      deleted,
-      totalActiveSize
-    };
+    return DataStore.getStats();
   }
 }
 
